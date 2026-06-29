@@ -92,6 +92,11 @@ jobs:
         working-directory: ${{ env.MOBILE_DIR }}
         run: flutter pub get
 
+      - name: Générer l'icône de l'app (logo Ahime)
+        working-directory: ${{ env.MOBILE_DIR }}
+        # Régénère les mipmaps + icône adaptative dans le android/ fraîchement recréé.
+        run: dart run flutter_launcher_icons
+
       - name: Build APK debug
         working-directory: ${{ env.MOBILE_DIR }}
         run: |
