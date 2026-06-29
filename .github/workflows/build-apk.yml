@@ -74,14 +74,19 @@ jobs:
       - name: Version Flutter
         run: flutter --version
 
-      - name: Régénérer les fichiers Android manquants (gradle wrapper, etc.)
+      - name: Régénérer le projet Android (versions Gradle/AGP/Kotlin alignées sur Flutter)
         working-directory: ${{ env.MOBILE_DIR }}
-        # N'écrase pas les fichiers existants ; complète ceux qui manquent (ex. gradle-wrapper.jar).
+        # On régénère android/ depuis zéro pour garantir des versions Gradle/AGP/Kotlin
+        # compatibles avec le Flutter installé, puis on réinjecte le manifeste de l'app
+        # (permission INTERNET, cleartext, libellé, queries WhatsApp pour url_launcher).
         run: |
+          cp android/app/src/main/AndroidManifest.xml /tmp/ahime_manifest.xml
+          rm -rf android
           flutter create --platforms=android --org com.ahime --project-name ahime_sales .
-          # Supprime les variantes .kts générées pour éviter l'ambiguïté avec nos fichiers Groovy (.gradle)
-          rm -f android/settings.gradle.kts android/build.gradle.kts android/app/build.gradle.kts
+          cp /tmp/ahime_manifest.xml android/app/src/main/AndroidManifest.xml
           chmod +x android/gradlew || true
+          echo "----- AndroidManifest réinjecté -----"
+          cat android/app/src/main/AndroidManifest.xml | head -5
 
       - name: Dépendances
         working-directory: ${{ env.MOBILE_DIR }}
