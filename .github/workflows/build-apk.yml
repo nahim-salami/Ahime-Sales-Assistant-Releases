@@ -1,0 +1,136 @@
+name: Build Android APK (Ahime Sales)
+
+# Récupère le code de l'app mobile depuis le dépôt PRIVÉ (via une clé de déploiement
+# read-only stockée dans le secret SOURCE_REPO_SSH_KEY), puis construit les APK
+# Android debug et release et les publie en Release sur CE dépôt public.
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "URL de l'API backend (Vercel) injectée dans l'app"
+        required: true
+        default: "https://ahime-sales-assistant.vercel.app"
+      ahime_whatsapp:
+        description: "Numéro WhatsApp officiel Ahime (format international sans +)"
+        required: true
+        default: "22952533792"
+      source_ref:
+        description: "Branche/tag/commit du dépôt source à construire"
+        required: true
+        default: "main"
+      make_release:
+        description: "Publier une GitHub Release avec les APK ?"
+        type: boolean
+        default: true
+  # Permet de déclencher le build à distance (ex. depuis le dépôt source)
+  repository_dispatch:
+    types: [build-apk]
+
+permissions:
+  contents: write
+
+env:
+  SOURCE_REPO: nahim-salami/Ahime-Sales-Assistant
+  MOBILE_DIR: source/apps/mobile
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Résoudre les paramètres
+        id: cfg
+        run: |
+          echo "api_base_url=${{ github.event.inputs.api_base_url || 'https://ahime-sales-assistant.vercel.app' }}" >> "$GITHUB_OUTPUT"
+          echo "ahime_whatsapp=${{ github.event.inputs.ahime_whatsapp || '22952533792' }}" >> "$GITHUB_OUTPUT"
+          echo "source_ref=${{ github.event.inputs.source_ref || 'main' }}" >> "$GITHUB_OUTPUT"
+          echo "make_release=${{ github.event.inputs.make_release == 'false' && 'false' || 'true' }}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date +'%Y%m%d-%H%M')" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout du code source (dépôt privé via clé de déploiement)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ steps.cfg.outputs.source_ref }}
+          ssh-key: ${{ secrets.SOURCE_REPO_SSH_KEY }}
+          path: source
+
+      - name: SHA court du commit source
+        id: src
+        run: echo "sha=$(git -C source rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Installer Java (Temurin 17)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Installer Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Version Flutter
+        run: flutter --version
+
+      - name: Régénérer les fichiers Android manquants (gradle wrapper, etc.)
+        working-directory: ${{ env.MOBILE_DIR }}
+        # N'écrase pas les fichiers existants ; complète ceux qui manquent (ex. gradle-wrapper.jar).
+        run: flutter create --platforms=android --org com.ahime --project-name ahime_sales .
+
+      - name: Dépendances
+        working-directory: ${{ env.MOBILE_DIR }}
+        run: flutter pub get
+
+      - name: Build APK debug
+        working-directory: ${{ env.MOBILE_DIR }}
+        run: |
+          flutter build apk --debug \
+            --dart-define=API_BASE_URL="${{ steps.cfg.outputs.api_base_url }}" \
+            --dart-define=AHIME_WHATSAPP="${{ steps.cfg.outputs.ahime_whatsapp }}"
+
+      - name: Build APK release
+        working-directory: ${{ env.MOBILE_DIR }}
+        run: |
+          flutter build apk --release \
+            --dart-define=API_BASE_URL="${{ steps.cfg.outputs.api_base_url }}" \
+            --dart-define=AHIME_WHATSAPP="${{ steps.cfg.outputs.ahime_whatsapp }}"
+
+      - name: Rassembler les APK
+        id: collect
+        run: |
+          mkdir -p dist
+          SUFFIX="${{ steps.cfg.outputs.date }}-${{ steps.src.outputs.sha }}"
+          cp "${MOBILE_DIR}/build/app/outputs/flutter-apk/app-debug.apk"   "dist/ahime-sales-${SUFFIX}-debug.apk"
+          cp "${MOBILE_DIR}/build/app/outputs/flutter-apk/app-release.apk" "dist/ahime-sales-${SUFFIX}-release.apk"
+          echo "suffix=$SUFFIX" >> "$GITHUB_OUTPUT"
+          ls -lh dist
+
+      - name: Upload artifacts (toujours disponibles dans le run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ahime-sales-apks-${{ steps.collect.outputs.suffix }}
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: Publier la Release (APK debug + release)
+        if: steps.cfg.outputs.make_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="apk-${{ github.run_number }}-${{ steps.collect.outputs.suffix }}"
+          gh release create "$TAG" dist/*.apk \
+            --repo "${{ github.repository }}" \
+            --title "Ahime Sales — APK build #${{ github.run_number }}" \
+            --notes "App mobile Ahime Sales Assistant (Android).
+
+          - Source : \`${{ env.SOURCE_REPO }}\` @ \`${{ steps.cfg.outputs.source_ref }}\` (\`${{ steps.src.outputs.sha }}\`)
+          - API_BASE_URL : \`${{ steps.cfg.outputs.api_base_url }}\`
+          - WhatsApp : \`${{ steps.cfg.outputs.ahime_whatsapp }}\`
+
+          Deux fichiers :
+          - **...-release.apk** : version de production (signée en debug par défaut, pour sideload).
+          - **...-debug.apk** : version de débogage.
+
+          > APK destinés au sideload (hors Play Store). Pour le Play Store, configurez une vraie clé de signature."
