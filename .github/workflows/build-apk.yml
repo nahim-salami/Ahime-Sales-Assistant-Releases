@@ -77,7 +77,11 @@ jobs:
       - name: Régénérer les fichiers Android manquants (gradle wrapper, etc.)
         working-directory: ${{ env.MOBILE_DIR }}
         # N'écrase pas les fichiers existants ; complète ceux qui manquent (ex. gradle-wrapper.jar).
-        run: flutter create --platforms=android --org com.ahime --project-name ahime_sales .
+        run: |
+          flutter create --platforms=android --org com.ahime --project-name ahime_sales .
+          # Supprime les variantes .kts générées pour éviter l'ambiguïté avec nos fichiers Groovy (.gradle)
+          rm -f android/settings.gradle.kts android/build.gradle.kts android/app/build.gradle.kts
+          chmod +x android/gradlew || true
 
       - name: Dépendances
         working-directory: ${{ env.MOBILE_DIR }}
